@@ -1,0 +1,91 @@
+# NVDA / MU 이익추정치 모니터
+# 평일 08:00 KST = 23:00 UTC (전일 일~목)
+# cron: 0 23 * * 0-4  (UTC Sun-Thu = Mon-Fri KST)
+
+name: Earnings Estimate Monitor
+
+on:
+  schedule:
+    - cron: "0 23 * * 0-4"   # 평일 08:00 KST
+  workflow_dispatch:           # 수동 트리거 (즉시 테스트)
+
+permissions:
+  contents: write              # data/estimates_history.json 커밋용
+  pages: write                 # GitHub Pages 배포용
+  id-token: write              # OIDC (Pages 배포 인증)
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run earnings monitor
+        env:
+          TELEGRAM_TOKEN:   ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TZ: "Asia/Seoul"
+        run: python earnings_monitor.py
+
+      - name: Notify on failure
+        if: failure()
+        env:
+          TELEGRAM_TOKEN:   ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python - <<'EOF'
+          import os, requests
+          token   = os.environ.get("TELEGRAM_TOKEN", "")
+          chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+          if token and chat_id:
+              requests.post(
+                  f"https://api.telegram.org/bot{token}/sendMessage",
+                  json={
+                      "chat_id": chat_id,
+                      "text": "❌ <b>이익추정치 모니터 실행 실패</b>\n"
+                              "GitHub Actions 로그를 확인해주세요.",
+                      "parse_mode": "HTML",
+                  },
+                  timeout=10
+              )
+          EOF
+
+  deploy-pages:
+    needs: monitor              # monitor job 완료 후 실행 (최신 history JSON 포함)
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Checkout (latest commit with updated history)
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: '.'             # index.html + data/ 전체 업로드
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

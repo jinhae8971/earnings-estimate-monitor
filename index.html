@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Earnings Estimate Monitor — NVDA · MU</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg:        #070d1a;
+    --card:      #0d1726;
+    --card2:     #111e30;
+    --border:    #1a3050;
+    --glow:      rgba(0,180,255,0.08);
+    --nvda:      #76ff03;
+    --mu:        #00bcd4;
+    --accent:    #00b4ff;
+    --red:       #ff1744;
+    --yellow:    #ffd740;
+    --text:      #d0e8ff;
+    --muted:     #4a6a8a;
+    --dim:       #253a52;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:var(--bg); color:var(--text); font-family:'Segoe UI',system-ui,sans-serif; min-height:100vh; }
+
+  /* ── HEADER ── */
+  header {
+    background: linear-gradient(135deg,#0a1428 0%,#0d2040 100%);
+    border-bottom:1px solid var(--border);
+    padding:18px 24px;
+    display:flex; align-items:center; justify-content:space-between;
+    flex-wrap:wrap; gap:10px;
+  }
+  .logo { font-size:1.15rem; font-weight:700; color:#fff; letter-spacing:.5px; }
+  .logo span { color:var(--accent); }
+  .meta { font-size:.78rem; color:var(--muted); }
+  .source-badge {
+    background:rgba(0,180,255,.1); border:1px solid rgba(0,180,255,.25);
+    color:var(--accent); font-size:.72rem; padding:3px 10px; border-radius:20px;
+  }
+
+  /* ── MAIN GRID ── */
+  main { max-width:1200px; margin:0 auto; padding:20px 16px 40px; }
+
+  .ticker-grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:20px; }
+  @media(max-width:800px){ .ticker-grid{grid-template-columns:1fr;} }
+
+  /* ── TICKER CARD ── */
+  .ticker-card {
+    background:var(--card);
+    border:1px solid var(--border);
+    border-radius:12px;
+    padding:20px;
+    position:relative;
+    overflow:hidden;
+  }
+  .ticker-card::before {
+    content:''; position:absolute; top:0; left:0; right:0; height:2px;
+  }
+  .ticker-card.nvda::before { background:var(--nvda); }
+  .ticker-card.mu::before  { background:var(--mu); }
+
+  .ticker-header { display:flex; align-items:baseline; gap:12px; margin-bottom:14px; }
+  .ticker-symbol { font-size:1.5rem; font-weight:800; }
+  .ticker-card.nvda .ticker-symbol { color:var(--nvda); }
+  .ticker-card.mu  .ticker-symbol  { color:var(--mu); }
+  .ticker-name  { color:var(--muted); font-size:.85rem; }
+  .ticker-price { margin-left:auto; font-size:1.1rem; font-weight:600; color:#fff; }
+  .ticker-upside{ font-size:.75rem; padding:2px 7px; border-radius:4px; margin-left:6px; }
+  .up   { background:rgba(118,255,3,.12);  color:var(--nvda); }
+  .down { background:rgba(255,23,68,.12);  color:var(--red); }
+  .flat { background:rgba(74,106,138,.15); color:var(--muted); }
+
+  /* ── EPS TABLE ── */
+  .eps-table { width:100%; border-collapse:collapse; font-size:.82rem; margin-bottom:14px; }
+  .eps-table th {
+    text-align:left; padding:5px 8px; color:var(--muted);
+    border-bottom:1px solid var(--dim); font-weight:400;
+  }
+  .eps-table td { padding:5px 8px; border-bottom:1px solid var(--dim); }
+  .eps-table tr:last-child td { border-bottom:none; }
+  .eps-val  { font-weight:600; color:#fff; font-size:.9rem; }
+  .chg-pos  { color:var(--nvda); font-size:.77rem; }
+  .chg-neg  { color:var(--red);  font-size:.77rem; }
+  .chg-flat { color:var(--muted);font-size:.77rem; }
+
+  /* ── REVISION BAR ── */
+  .rev-row { display:flex; align-items:center; gap:6px; margin:3px 0; }
+  .rev-label{ font-size:.74rem; color:var(--muted); width:52px; flex-shrink:0; }
+  .rev-bar  { flex:1; height:6px; background:var(--dim); border-radius:3px; overflow:hidden; }
+  .rev-fill { height:100%; border-radius:3px; transition:width .5s; }
+  .rev-nums { font-size:.72rem; color:var(--muted); width:60px; text-align:right; flex-shrink:0; }
+
+  /* ── CHART ── */
+  .chart-wrap {
+    background:var(--card2); border:1px solid var(--border);
+    border-radius:12px; padding:16px 16px 12px; margin-bottom:16px;
+  }
+  .chart-title { font-size:.82rem; color:var(--muted); margin-bottom:10px; letter-spacing:.3px; }
+  canvas { max-height:220px; }
+
+  /* ── REVERSAL ALERT ── */
+  .reversal-alert {
+    background:rgba(255,215,64,.08); border:1px solid rgba(255,215,64,.3);
+    border-radius:8px; padding:10px 14px; margin-bottom:12px;
+    font-size:.82rem; color:var(--yellow);
+  }
+  .reversal-alert .alert-title { font-weight:700; margin-bottom:4px; }
+
+  /* ── STATUS FOOTER ── */
+  .status-bar {
+    display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+    font-size:.75rem; color:var(--muted); padding-top:8px;
+    border-top:1px solid var(--dim); margin-top:12px;
+  }
+  .dot { width:7px; height:7px; border-radius:50%; display:inline-block; }
+  .dot.ok  { background:var(--nvda); box-shadow:0 0 6px var(--nvda); }
+  .dot.err { background:var(--red);  box-shadow:0 0 6px var(--red); }
+
+  /* ── LOADING ── */
+  #loading {
+    display:flex; align-items:center; justify-content:center;
+    min-height:60vh; font-size:1rem; color:var(--muted);
+  }
+  .spinner {
+    width:28px; height:28px; border:3px solid var(--dim);
+    border-top-color:var(--accent); border-radius:50%;
+    animation:spin .8s linear infinite; margin-right:12px;
+  }
+  @keyframes spin { to{transform:rotate(360deg)} }
+
+  /* ── SECTION TITLE ── */
+  .section-title {
+    font-size:.72rem; text-transform:uppercase; letter-spacing:1px;
+    color:var(--muted); margin-bottom:8px; display:flex; align-items:center; gap:6px;
+  }
+  .section-title::after {
+    content:''; flex:1; height:1px; background:var(--dim);
+  }
+
+  /* ── SUMMARY ROW ── */
+  .summary-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin-bottom:14px; }
+  .summary-cell {
+    background:var(--card2); border:1px solid var(--border);
+    border-radius:8px; padding:8px 10px; text-align:center;
+  }
+  .summary-val  { font-size:1.05rem; font-weight:700; color:#fff; }
+  .summary-lbl  { font-size:.68rem; color:var(--muted); margin-top:2px; }
+  .summary-chg  { font-size:.73rem; margin-top:2px; }
+
+  /* ── LAST UPDATED ── */
+  #last-updated { text-align:center; font-size:.75rem; color:var(--muted); margin-top:10px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <div class="logo">📊 <span>이익추정치</span> 모니터</div>
+    <div class="meta">NVDA · MU &nbsp;|&nbsp; Yahoo Finance 컨센서스</div>
+  </div>
+  <div style="display:flex;gap:8px;align-items:center;">
+    <span class="source-badge">📡 yfinance 집계</span>
+    <span class="source-badge" id="data-age">로딩 중…</span>
+  </div>
+</header>
+
+<main>
+  <div id="loading"><div class="spinner"></div>데이터 로딩 중…</div>
+  <div id="content" style="display:none">
+
+    <!-- 티커 카드 그리드 -->
+    <div class="ticker-grid" id="ticker-grid"></div>
+
+    <!-- EPS 추이 차트 -->
+    <div class="chart-wrap">
+      <div class="chart-title">📈 EPS 추정치 6개월 추이 — 현재 FY (0y)</div>
+      <canvas id="eps0y-chart"></canvas>
+    </div>
+    <div class="chart-wrap">
+      <div class="chart-title">📈 EPS 추정치 6개월 추이 — 다음 FY (+1y)</div>
+      <canvas id="eps1y-chart"></canvas>
+    </div>
+
+  </div>
+</main>
+
+<div id="last-updated"></div>
+
+<script>
+/* ──────────────────────────────────────────────────────────
+   유틸
+   ────────────────────────────────────────────────────────── */
+const fmt = (v, d=2) => v == null ? 'N/A' : `$${Number(v).toFixed(d)}`;
+const fmtB = v => v == null ? 'N/A' : `$${(v/1e9).toFixed(2)}B`;
+const pct  = (cur, old) => old && old!==0 ? ((cur-old)/Math.abs(old)*100).toFixed(1) : null;
+
+function chgClass(p) {
+  if (p == null) return 'chg-flat';
+  return Number(p) > 0 ? 'chg-pos' : Number(p) < 0 ? 'chg-neg' : 'chg-flat';
+}
+function chgArrow(p) {
+  if (p == null) return '─';
+  return Number(p) > 0 ? '▲' : Number(p) < 0 ? '▼' : '─';
+}
+
+/* ──────────────────────────────────────────────────────────
+   히스토리 기반 분석
+   ────────────────────────────────────────────────────────── */
+function analyzeHistory(rows, field) {
+  const valid = rows.filter(r => r[field] != null).sort((a,b)=>a.date.localeCompare(b.date));
+  if (valid.length < 2) return { pct1m:null, pct3m:null, pct6m:null, vals:[], dates:[], reversal:false, dir:'unknown', consecutive:1 };
+
+  const today = new Date();
+  const ago = (days) => {
+    const d = new Date(today); d.setDate(d.getDate()-days);
+    return d.toISOString().slice(0,10);
+  };
+
+  const cur = valid[valid.length-1][field];
+  const findOld = (days) => {
+    const cut = ago(days);
+    const past = valid.filter(r=>r.date<=cut);
+    return past.length ? past[past.length-1][field] : null;
+  };
+
+  const old1m = findOld(30), old3m = findOld(90), old6m = findOld(180);
+  const pct1m = pct(cur, old1m), pct3m = pct(cur, old3m), pct6m = pct(cur, old6m);
+
+  // 방향성 배열
+  const dirs = [];
+  for (let i=1; i<valid.length; i++) {
+    const diff = valid[i][field] - valid[i-1][field];
+    const thr  = Math.abs(valid[i-1][field]) * 0.001;
+    if      (diff >  thr) dirs.push('up');
+    else if (diff < -thr) dirs.push('down');
+    else                  dirs.push('flat');
+  }
+  const curDir = dirs[dirs.length-1] || 'unknown';
+  let consecutive = 1;
+  for (let i=dirs.length-2; i>=0; i--) {
+    if (dirs[i]===curDir) consecutive++;
+    else break;
+  }
+
+  // 추세꺽임 (4개 이상)
+  let reversal = false;
+  if (valid.length >= 4 && dirs.length >= 3) {
+    const prev    = dirs.slice(0,-1).filter(d=>d!=='flat');
+    if (prev.length) {
+      const counts  = {}; prev.forEach(d=>{counts[d]=(counts[d]||0)+1;});
+      const prevMain= Object.keys(counts).sort((a,b)=>counts[b]-counts[a])[0];
+      if (curDir!=='flat' && curDir!=='unknown' && curDir!==prevMain) reversal=true;
+    }
+  }
+
+  return {
+    pct1m, pct3m, pct6m,
+    vals : valid.map(r=>r[field]),
+    dates: valid.map(r=>r.date),
+    reversal, dir:curDir, consecutive,
+    first: valid[0][field],
+    last:  cur,
+  };
+}
+
+/* ──────────────────────────────────────────────────────────
+   티커 카드 렌더링
+   ────────────────────────────────────────────────────────── */
+const PERIODS   = ['0q','+1q','0y','+1y'];
+const PLABELS   = {'0q':'현재분기','+1q':'다음분기','0y':'현재FY','+1y':'다음FY'};
+const TICKER_COLORS = { NVDA: getComputedStyle(document.documentElement).getPropertyValue('--nvda').trim() || '#76ff03',
+                         MU:   getComputedStyle(document.documentElement).getPropertyValue('--mu').trim()   || '#00bcd4' };
+
+function buildTickerCard(ticker, rows, latestYf) {
+  // 최신 스냅샷
+  const latest = [...rows].sort((a,b)=>a.date.localeCompare(b.date)).slice(-1)[0] || {};
+
+  // 리비전 분석
+  const revs = {};
+  PERIODS.forEach(p => {
+    revs[p] = analyzeHistory(rows, `eps_${p}`);
+  });
+
+  // 추세꺽임 목록
+  const reversals = PERIODS.filter(p => revs[p].reversal);
+
+  // 현재가 & 타겟 (yf 실시간 데이터 사용)
+  const price  = latestYf?.price;
+  const target = latestYf?.target;
+  const upside = (price && target) ? ((target-price)/price*100).toFixed(1) : null;
+  const recMap = {strongbuy:'강력매수',buy:'매수',hold:'보유',sell:'매도',strongsell:'강력매도'};
+
+  const cls   = ticker.toLowerCase();
+  const color = cls==='nvda' ? 'var(--nvda)' : 'var(--mu)';
+
+  let html = `<div class="ticker-card ${cls}">`;
+
+  /* 헤더 */
+  html += `<div class="ticker-header">
+    <span class="ticker-symbol">${ticker}</span>
+    <span class="ticker-name">${cls==='nvda'?'NVIDIA':'Micron Technology'}</span>`;
+  if (price) {
+    const uCls   = upside == null ? '' : Number(upside)>0 ? 'up' : Number(upside)<0 ? 'down' : 'flat';
+    const uStr   = upside != null ? `<span class="ticker-upside ${uCls}">${Number(upside)>0?'▲':'▼'}${Math.abs(upside)}%</span>` : '';
+    html += `<div class="ticker-price">${fmt(price)} ${uStr}</div>`;
+  }
+  html += `</div>`;
+
+  /* 추세꺽임 알림 */
+  if (reversals.length) {
+    html += `<div class="reversal-alert">
+      <div class="alert-title">⚡ 추세꺽임 감지!</div>`;
+    reversals.forEach(p => {
+      const r = revs[p];
+      const dir = r.dir==='up' ? '하향→상향 전환' : '상향→하향 전환';
+      const p1m = r.pct1m != null ? ` (1M ${Number(r.pct1m)>0?'+':''}${r.pct1m}%)` : '';
+      html += `<div>▸ ${PLABELS[p]}: ${dir} · ${r.consecutive}회 연속${p1m}</div>`;
+    });
+    html += `</div>`;
+  }
+
+  /* EPS 추정치 테이블 */
+  html += `<div class="section-title">EPS 추정치 컨센서스</div>`;
+  html += `<table class="eps-table">
+    <tr><th>기간</th><th>현재</th><th>1M</th><th>3M</th><th>6M</th><th>애널리스트</th></tr>`;
+  PERIODS.forEach(p => {
+    const cur = latest[`eps_${p}`];
+    const r   = revs[p];
+    const n   = latest[`eps_${p}_n`];
+    if (cur == null) return;
+
+    const mk = (pp) => {
+      if (pp==null) return `<span class="chg-flat">─</span>`;
+      const c = chgClass(pp); const a = chgArrow(pp);
+      return `<span class="${c}">${a}${Math.abs(pp)}%</span>`;
+    };
+    html += `<tr>
+      <td>${PLABELS[p]}</td>
+      <td class="eps-val">${fmt(cur)}</td>
+      <td>${mk(r.pct1m)}</td>
+      <td>${mk(r.pct3m)}</td>
+      <td>${mk(r.pct6m)}</td>
+      <td style="color:var(--muted)">${n!=null?n+'명':'─'}</td>
+    </tr>`;
+  });
+  html += `</table>`;
+
+  /* 수정 방향 바 */
+  html += `<div class="section-title">최근 추정치 수정 방향</div>`;
+  if (latestYf?.revisions) {
+    PERIODS.forEach(p => {
+      const rv = latestYf.revisions[p] || {};
+      const u7=rv.up7d||0, d7=rv.down7d||0, u30=rv.up30d||0, d30=rv.down30d||0;
+      if ((u7+d7+u30+d30)===0) return;
+      const tot7  = Math.max(u7+d7, 1);
+      const tot30 = Math.max(u30+d30, 1);
+      html += `<div style="margin-bottom:4px">
+        <div style="font-size:.74rem;color:var(--muted);margin-bottom:2px">${PLABELS[p]}</div>
+        <div class="rev-row">
+          <div class="rev-label" style="font-size:.7rem">7일</div>
+          <div class="rev-bar"><div class="rev-fill" style="width:${(u7/tot7*100).toFixed(0)}%;background:var(--nvda)"></div></div>
+          <div class="rev-nums">▲${u7} / ▼${d7}</div>
+        </div>
+        <div class="rev-row">
+          <div class="rev-label" style="font-size:.7rem">30일</div>
+          <div class="rev-bar"><div class="rev-fill" style="width:${(u30/tot30*100).toFixed(0)}%;background:${cls==='nvda'?'var(--nvda)':'var(--mu)'}"></div></div>
+          <div class="rev-nums">▲${u30} / ▼${d30}</div>
+        </div>
+      </div>`;
+    });
+  } else {
+    html += `<div style="font-size:.77rem;color:var(--muted)">수정 데이터 없음 (히스토리 누적 후 표시)</div>`;
+  }
+
+  /* 상태 푸터 */
+  html += `<div class="status-bar">
+    <span class="dot ok"></span>
+    <span>데이터 ${rows.length}일치 누적</span>
+    <span>·</span>
+    <span>최근: ${latest.date || '─'}</span>
+  </div>`;
+
+  html += `</div>`;
+  return html;
+}
+
+/* ──────────────────────────────────────────────────────────
+   Chart.js 라인차트
+   ────────────────────────────────────────────────────────── */
+function makeChart(canvasId, datasets, title) {
+  const ctx = document.getElementById(canvasId);
+  if (!ctx) return;
+  new Chart(ctx, {
+    type: 'line',
+    data: { datasets },
+    options: {
+      responsive:true,
+      maintainAspectRatio:true,
+      interaction:{ mode:'index', intersect:false },
+      plugins:{
+        legend:{ labels:{ color:'#4a6a8a', font:{size:11} } },
+        tooltip:{
+          backgroundColor:'#0d1726',
+          borderColor:'#1a3050',
+          borderWidth:1,
+          titleColor:'#d0e8ff',
+          bodyColor:'#8aabb0',
+          callbacks:{
+            label: ctx => ` ${ctx.dataset.label}: $${ctx.parsed.y.toFixed(2)}`
+          }
+        }
+      },
+      scales:{
+        x:{
+          type:'category',
+          ticks:{ color:'#4a6a8a', maxRotation:45, font:{size:10}, maxTicksLimit:10 },
+          grid:{ color:'#1a3050' }
+        },
+        y:{
+          ticks:{ color:'#4a6a8a', callback: v=>`$${v.toFixed(2)}`, font:{size:10} },
+          grid:{ color:'#1a3050' }
+        }
+      }
+    }
+  });
+}
+
+/* ──────────────────────────────────────────────────────────
+   메인 로직
+   ────────────────────────────────────────────────────────── */
+async function main() {
+  try {
+    // 캐시 방지 쿼리
+    const ts   = Date.now();
+    const resp = await fetch(`data/estimates_history.json?t=${ts}`);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const history = await resp.json();
+
+    document.getElementById('loading').style.display  = 'none';
+    document.getElementById('content').style.display  = 'block';
+
+    const grid = document.getElementById('ticker-grid');
+    grid.innerHTML = '';
+
+    // 각 티커 카드
+    ['NVDA','MU'].forEach(ticker => {
+      const rows = (history[ticker] || []).sort((a,b)=>a.date.localeCompare(b.date));
+      const latest = rows.slice(-1)[0] || {};
+      // latestYf: history에 저장된 최신 eps_revisions 등은 별도로 fetch하지 않고 history만 사용
+      grid.innerHTML += buildTickerCard(ticker, rows, null);
+    });
+
+    /* ── 차트: 현재 FY eps_0y ── */
+    const chartDatasets0y = ['NVDA','MU'].map((ticker, i) => {
+      const rows  = (history[ticker]||[]).sort((a,b)=>a.date.localeCompare(b.date));
+      const valid = rows.filter(r=>r['eps_0y']!=null);
+      return {
+        label: ticker,
+        data : valid.map(r=>({ x:r.date, y:r['eps_0y'] })),
+        borderColor  : i===0 ? '#76ff03' : '#00bcd4',
+        backgroundColor: i===0 ? 'rgba(118,255,3,.07)' : 'rgba(0,188,212,.07)',
+        pointRadius  : 4,
+        pointHoverRadius:6,
+        tension:.3,
+        fill:true,
+      };
+    });
+    makeChart('eps0y-chart', chartDatasets0y);
+
+    /* ── 차트: 다음 FY eps_+1y ── */
+    const chartDatasets1y = ['NVDA','MU'].map((ticker, i) => {
+      const rows  = (history[ticker]||[]).sort((a,b)=>a.date.localeCompare(b.date));
+      const valid = rows.filter(r=>r['eps_+1y']!=null);
+      return {
+        label: ticker,
+        data : valid.map(r=>({ x:r.date, y:r['eps_+1y'] })),
+        borderColor  : i===0 ? '#76ff03' : '#00bcd4',
+        backgroundColor: i===0 ? 'rgba(118,255,3,.07)' : 'rgba(0,188,212,.07)',
+        pointRadius  : 4,
+        pointHoverRadius:6,
+        tension:.3,
+        fill:true,
+      };
+    });
+    makeChart('eps1y-chart', chartDatasets1y);
+
+    /* ── 최신 날짜 ── */
+    const allDates = Object.values(history).flat().map(r=>r.date).filter(Boolean).sort();
+    const lastDate = allDates.slice(-1)[0];
+    document.getElementById('data-age').textContent = lastDate ? `최신 ${lastDate}` : '데이터 없음';
+    document.getElementById('last-updated').textContent =
+      `마지막 업데이트: ${lastDate || '─'} | 평일 08:00 KST 자동 갱신 | 출처: Yahoo Finance`;
+
+  } catch(e) {
+    document.getElementById('loading').innerHTML =
+      `<div style="color:var(--red)">⚠ 데이터 로드 실패: ${e.message}<br>
+       <span style="font-size:.8rem;color:var(--muted)">GitHub Actions 최초 실행 전이거나 data 파일이 없을 수 있어요.</span></div>`;
+    console.error(e);
+  }
+}
+
+main();
+</script>
+</body>
+</html>
