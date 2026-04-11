@@ -633,7 +633,7 @@ def main():
         analysis = build_analysis(ticker, ticker_hist)
 
         # 메시지 생성
-        msg = build_ticker_message(ticker, current, ticker_hist, analysis)
+        msg = build_ticker_section(ticker, current, ticker_hist, analysis)
         messages.append(msg)
         print(msg)
         print()
