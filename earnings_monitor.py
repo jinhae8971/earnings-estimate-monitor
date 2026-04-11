@@ -591,64 +591,66 @@ def send_telegram(msg: str, token: str, chat_id: str):
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
 def main():
-    cfg      = load_config()
-    token    = cfg["telegram_token"]
-    chat_id  = cfg["telegram_chat_id"]
-    now      = now_kst()
+    cfg     = load_config()
+    token   = cfg["telegram_token"]
+    chat_id = cfg["telegram_chat_id"]
+    now     = now_kst()
 
+    ok = chr(10003); ng = chr(10007)
     print(f"[START] {now.strftime('%Y-%m-%d %H:%M KST')}")
-    print(f"[TG]    token={'✓' if token else '✗'}  chat_id={'✓' if chat_id else '✗'}")
+    print(f"[TG]    token={ok if token else ng}  chat_id={ok if chat_id else ng}")
 
-    # 히스토리 로드 & 정리
     history = load_history()
     history = prune_history(history)
 
-    # 헤더 메시지
-    header = (
-        f"📊 <b>이익추정치 모니터</b>\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"🗓 {now.strftime('%Y-%m-%d (%a) %H:%M')} KST\n"
-        f"📡 출처: Yahoo Finance 컨센서스\n"
-        f"🔄 NVDA·MU EPS/매출 추정치 + 추세꺽임\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━"
-    )
-
-    messages = [header]
+    sections = []
+    sep = chr(9472) * 36
 
     for ticker in TICKERS:
         print(f"\n[{ticker}] 데이터 수집 중...")
         current = fetch_ticker_data(ticker)
-
         if current.get("errors"):
             print(f"  오류: {current['errors']}")
 
-        # 스냅샷 기록 (오늘 기존 데이터 덮어쓰기)
-        today_str    = date.today().isoformat()
-        ticker_hist  = [r for r in history.get(ticker, []) if r.get("date") != today_str]
-        snap         = make_snapshot(current)
+        today_str   = date.today().isoformat()
+        ticker_hist = [row for row in history.get(ticker, []) if row.get("date") != today_str]
+        snap        = make_snapshot(current)
         ticker_hist.append(snap)
         history[ticker] = ticker_hist
 
-        # 추세 분석
         analysis = build_analysis(ticker, ticker_hist)
-
-        # 메시지 생성
-        msg = build_ticker_section(ticker, current, ticker_hist, analysis)
-        messages.append(msg)
-        print(msg)
+        section  = build_ticker_section(ticker, current, ticker_hist, analysis)
+        sections.append(section)
+        print(section)
         print()
 
-    # 히스토리 저장 → Git 커밋
+    header_line = f"<b>이익추정치 모니터</b>  |  {now.strftime('%Y-%m-%d %H:%M')} KST"
+    sub_line    = "출처: Yahoo Finance 컨센서스  |  NVDA · MU  EPS/매출 추정치 + 추세꺽임"
+    footer_line = "<i>투자 판단의 책임은 투자자 본인에게 있습니다.</i>"
+    nl          = "\n"
+
+    combined = nl.join([
+        header_line,
+        sub_line,
+        sep,
+        f"{nl}{sep}{nl}".join(sections),
+        sep,
+        footer_line,
+    ])
+
+    if len(combined) > 4090:
+        combined = combined[:4087] + "..."
+
+    print(f"\n[COMBINED MSG] {len(combined)} chars")
+
     save_history(history)
     git_commit_history()
 
-    # 텔레그램 발송
     if token and chat_id:
-        for msg in messages:
-            try:
-                send_telegram(msg, token, chat_id)
-            except Exception as e:
-                print(f"[TG] 전송 실패: {e}")
+        try:
+            send_telegram(combined, token, chat_id)
+        except Exception as e:
+            print(f"[TG] 전송 실패: {e}")
     else:
         print("[WARN] Telegram 미설정 — 콘솔 출력만")
 
