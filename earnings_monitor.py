@@ -453,159 +453,106 @@ def fmt_eps(v: float | None) -> str:
     if v is None: return "N/A"
     return f"${v:.2f}"
 
-def build_ticker_message(ticker: str, current: dict, history: list, analysis: dict) -> str:
-    name       = TICKER_NAMES.get(ticker, ticker)
-    emoji      = "🟢" if ticker == "NVDA" else "🔵"
-    recom_map  = {
+def build_ticker_section(ticker: str, current: dict, history: list, analysis: dict) -> str:
+    """종목별 섹션 — 전문 리서치 스타일 compact 포맷"""
+    name      = TICKER_NAMES.get(ticker, ticker)
+    recom_map = {
         "strongbuy": "강력매수", "buy": "매수",
         "hold": "보유", "sell": "매도", "strongsell": "강력매도"
     }
 
-    lines = [f"{emoji} <b>{ticker} ({name})</b>"]
+    lines = []
 
-    # 현재가 & 목표가
+    # ── 종목 헤더 ─────────────────────────────────────────────────────────
     price  = current.get("price")
     target = current.get("mean_target")
     recom  = recom_map.get((current.get("recommendation") or "").lower(), current.get("recommendation", ""))
     n_a    = current.get("n_analysts_price")
-    if price:
-        upside = f"  목표 ${target:.0f}({(target-price)/price*100:+.1f}%)" if target else ""
-        a_str  = f"  [{n_a}명·{recom}]" if n_a else ""
-        lines.append(f"  현재가 <b>${price:.2f}</b>{upside}{a_str}")
-    lines.append("")
 
-    # ── EPS 추정치 ─────────────────────────────────────────────────────
+    price_str  = f"${price:.2f}" if price else "N/A"
+    target_str = f"  목표 ${target:.0f}({(target-price)/price*100:+.1f}%)" if (target and price) else ""
+    analyst_str = f"  [{n_a}명·{recom}]" if n_a else ""
+    lines.append(f"<b>{ticker} ({name})</b>  {price_str}{target_str}{analyst_str}")
+
+    # ── EPS 추정치 (컨센서스) ────────────────────────────────────────────
     et_data = current.get("eps_trend", {})
     ee_data = current.get("earnings_estimate", {})
-    lines.append("📊 <b>EPS 추정치 (컨센서스)</b>")
-    has_eps = False
+    eps_rows = []
     for period in PERIODS:
         et  = et_data.get(period, {})
         ee  = ee_data.get(period, {})
-        # eps_trend.current 우선 (yf 내장 검증값), fallback → earnings_estimate.avg
         cur = et.get("current") if et.get("current") is not None else ee.get("avg")
         if cur is None: continue
-        has_eps = True
-
-        n_str    = f"[{ee.get('n')}명]" if ee.get('n') else ""
-        low_high = (f"  범위 ${ee.get('low', 0):.2f}~${ee.get('high', 0):.2f}"
-                    if ee.get('low') and ee.get('high') else "")
-
-        # 30일/90일 비교 (eps_trend 내장)
-        d30  = et.get("30dAgo")
-        d90  = et.get("90dAgo")
-        chg30 = ""
-        chg90 = ""
-        if d30 and d30 != 0:
-            p = (cur - d30) / abs(d30) * 100
-            arrow = "▲" if p > 0 else "▼" if p < 0 else "─"
-            chg30 = f"  {arrow}30d {p:+.1f}%"
-        if d90 and d90 != 0:
-            p = (cur - d90) / abs(d90) * 100
-            arrow = "▲" if p > 0 else "▼" if p < 0 else "─"
-            chg90 = f"  {arrow}90d {p:+.1f}%"
-
+        d30 = et.get("30dAgo"); d90 = et.get("90dAgo")
+        c30 = f"  {('▲' if (cur-d30)/abs(d30)*100>0 else '▼')}30d {(cur-d30)/abs(d30)*100:+.1f}%" if d30 else ""
+        c90 = f"  {('▲' if (cur-d90)/abs(d90)*100>0 else '▼')}90d {(cur-d90)/abs(d90)*100:+.1f}%" if d90 else ""
         label = PERIOD_LABELS.get(period, period)
-        lines.append(f"  <b>{label}</b>: <b>{fmt_eps(cur)}</b> {n_str}{chg30}{chg90}")
-        if low_high: lines.append(f"    {low_high}")
+        eps_rows.append(f"  {label:<8} {fmt_eps(cur):>7}{c30}{c90}")
+    if eps_rows:
+        lines.append("<b>EPS 추정치</b>")
+        lines.extend(eps_rows)
 
-    if not has_eps:
-        lines.append("  ⚠️ EPS 데이터 없음")
-    lines.append("")
-
-    # ── 매출 추정치 ────────────────────────────────────────────────────
+    # ── 매출 추정치 ──────────────────────────────────────────────────────
     re_data = current.get("revenue_estimate", {})
-    if any(re_data.get(p, {}).get("avg") for p in PERIODS):
-        lines.append("💰 <b>매출 추정치</b>")
-        for period in PERIODS:
-            rv = re_data.get(period, {})
-            avg = rv.get("avg")
-            if avg is None: continue
-            g   = rv.get("growth")
-            g_str = f"  YoY {g*100:+.1f}%" if g else ""
-            label = PERIOD_LABELS.get(period, period)
-            lines.append(f"  <b>{label}</b>: {fmt_billion(avg)}{g_str}")
-        lines.append("")
+    rev_rows = []
+    for period in PERIODS:
+        rv  = re_data.get(period, {})
+        avg = rv.get("avg")
+        if avg is None: continue
+        g   = rv.get("growth")
+        g_s = f"  YoY {g*100:+.1f}%" if g else ""
+        rev_rows.append(f"  {PERIOD_LABELS.get(period, period):<8} {fmt_billion(avg)}{g_s}")
+    if rev_rows:
+        lines.append("<b>매출 추정치</b>")
+        lines.extend(rev_rows)
 
-    # ── 수정 방향 (상향/하향 카운트) ─────────────────────────────────
+    # ── 추정치 수정 방향 ─────────────────────────────────────────────────
     er_data = current.get("eps_revisions", {})
-    has_revisions = any(
-        any((er_data.get(p) or {}).get(k) for k in ["up7d","down7d","up30d","down30d"])
-        for p in PERIODS
-    )
-    if has_revisions:
-        lines.append("📝 <b>추정치 수정 방향</b>")
-        for period in PERIODS:
-            rev = er_data.get(period, {}) or {}
-            u7  = rev.get("up7d",   0) or 0
-            d7  = rev.get("down7d", 0) or 0
-            u30 = rev.get("up30d",  0) or 0
-            d30 = rev.get("down30d",0) or 0
-            if u7 + d7 + u30 + d30 == 0: continue
-            label = PERIOD_LABELS.get(period, period)
-            bias7  = "▲우세" if u7 > d7 else "▼우세" if d7 > u7 else "중립"
-            bias30 = "▲우세" if u30 > d30 else "▼우세" if d30 > u30 else "중립"
-            lines.append(
-                f"  {label}: "
-                f"7일 ▲{u7}/▼{d7}({bias7})  "
-                f"30일 ▲{u30}/▼{d30}({bias30})"
-            )
-        lines.append("")
+    rev_dir_rows = []
+    for period in PERIODS:
+        rev = er_data.get(period, {}) or {}
+        u7  = rev.get("up7d",0) or 0; d7  = rev.get("down7d",0) or 0
+        u30 = rev.get("up30d",0) or 0; d30 = rev.get("down30d",0) or 0
+        if u7+d7+u30+d30 == 0: continue
+        b7  = "▲우세" if u7>d7 else "▼우세" if d7>u7 else "중립"
+        b30 = "▲우세" if u30>d30 else "▼우세" if d30>u30 else "중립"
+        rev_dir_rows.append(f"  {PERIOD_LABELS.get(period,period):<8}  7일 ▲{u7}/▼{d7}({b7})  30일 ▲{u30}/▼{d30}({b30})")
+    if rev_dir_rows:
+        lines.append("<b>수정 방향</b>")
+        lines.extend(rev_dir_rows)
 
-    # ── 6개월 EPS 추이 (히스토리 기반) ───────────────────────────────
+    # ── EPS 추이 요약 (6개월) ────────────────────────────────────────────
     sorted_h = sorted(history, key=lambda x: x["date"])
-    if len(sorted_h) >= 3:
-        lines.append("📈 <b>6개월 EPS 추이 (히스토리 누적)</b>")
-        for period in ["0y", "+1y"]:
-            tr    = analysis["eps"].get(period, {})
-            vals  = tr.get("sparkline_vals", [])
-            n_pts = tr.get("n_points", 0)
-            if len(vals) < 2: continue
-            sp    = sparkline(vals)
-            first = vals[0]
-            last  = vals[-1]
-            p6m   = tr.get("pct_6m")
-            p1m   = tr.get("pct_1m")
-            p3m   = tr.get("pct_3m")
-            label = PERIOD_LABELS.get(period, period)
-            dir_arrow = {"up": "▲", "down": "▼", "flat": "─"}.get(tr.get("direction", ""), "─")
-            lines.append(f"  <b>{label}</b>: {sp}")
-            lines.append(f"    ${first:.2f}→${last:.2f}  "
-                         f"1M:{fmt_pct(p1m)}  3M:{fmt_pct(p3m)}  6M:{fmt_pct(p6m)}")
-            lines.append(f"    방향: {dir_arrow} {tr.get('direction','?')} "
-                         f"({tr.get('consecutive',1)}회 연속)  "
-                         f"데이터 {n_pts}일")
-        lines.append("")
+    trend_rows = []
+    for period in ["0y", "+1y"]:
+        tr   = analysis["eps"].get(period, {})
+        vals = tr.get("sparkline_vals", [])
+        if len(vals) < 2: continue
+        first = vals[0]; last = vals[-1]
+        p1m = fmt_pct(tr.get("pct_1m")); p3m = fmt_pct(tr.get("pct_3m")); p6m = fmt_pct(tr.get("pct_6m"))
+        d_arrow = {"up": "▲", "down": "▼", "flat": "─"}.get(tr.get("direction",""), "─")
+        label = PERIOD_LABELS.get(period, period)
+        trend_rows.append(f"  {label:<8}  ${first:.2f}→${last:.2f}  1M:{p1m}  3M:{p3m}  6M:{p6m}  {d_arrow}{tr.get('consecutive',1)}회 연속")
+    if trend_rows:
+        lines.append("<b>EPS 추이 (6개월)</b>")
+        lines.extend(trend_rows)
 
-    # ── 추세꺽임 ──────────────────────────────────────────────────────
+    # ── 추세꺽임 ─────────────────────────────────────────────────────────
     reversals = analysis.get("reversals", [])
     if reversals:
-        lines.append("⚠️⚠️ <b>추세꺽임 감지!</b>")
-        for r in reversals:
-            dir_str = "상향→하향 전환" if r["direction"] == "down" else "하향→상향 전환"
-            p_str   = f"  1M 변화 {r['pct_1m']:+.1f}%" if r.get("pct_1m") is not None else ""
-            lines.append(
-                f"  ⚡ {r['label']}: {dir_str}"
-                f"  ({r['consecutive']}회 연속){p_str}"
-            )
+        lines.append("<b>추세꺽임 감지</b>")
+        for rv in reversals:
+            dir_str = "상향→하향" if rv["direction"] == "down" else "하향→상향"
+            p_str   = f"  1M {rv['pct_1m']:+.1f}%" if rv.get("pct_1m") is not None else ""
+            lines.append(f"  {rv['label']}: {dir_str} ({rv['consecutive']}회 연속){p_str}")
+    elif len(sorted_h) >= REVERSAL_MIN_HISTORY:
+        lines.append("추세꺽임: 없음 (현재 방향 지속)")
     else:
-        # 히스토리 충분하면 방향 요약
-        if len(sorted_h) >= REVERSAL_MIN_HISTORY:
-            lines.append("✅ 추세꺽임: 없음 (현재 방향 지속)")
-        else:
-            lines.append(f"📌 추세꺽임: 데이터 누적 중 ({len(sorted_h)}일/{REVERSAL_MIN_HISTORY}일)")
-
-    # ── 데이터 품질 경고 ──────────────────────────────────────────────
-    if current.get("quality_notes"):
-        lines.append("")
-        lines.append("🔍 <b>데이터 검증 노트</b>")
-        for note in current["quality_notes"]:
-            lines.append(f"  • {note}")
-
-    if current.get("errors"):
-        lines.append(f"  ⚠️ 수집 오류: {len(current['errors'])}건 (부분 데이터)")
+        lines.append(f"추세꺽임: 데이터 누적 중 ({len(sorted_h)}일/{REVERSAL_MIN_HISTORY}일)")
 
     return "\n".join(lines)
+
+
 
 # ─── Git 히스토리 커밋 ────────────────────────────────────────────────────────
 def git_commit_history():
